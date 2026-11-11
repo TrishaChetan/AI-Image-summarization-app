@@ -8,6 +8,7 @@ A local, private Streamlit app that describes images and answers questions about
 - 🔎 **Visual Q&A** — ask any question about what's in the picture
 - 🟢 **Ollama health check** — the sidebar shows whether Ollama is running
 - 🧠 **Auto model detection** — lists the vision models you actually have installed
+- ⚡ **Auto-resize** — big phone photos are shrunk (and EXIF-rotated) before being sent to the model, for much faster responses; size is adjustable in the sidebar
 - 🛟 **Friendly errors** — clear messages when Ollama is down, a model is missing, or a request times out
 
 ## Setup

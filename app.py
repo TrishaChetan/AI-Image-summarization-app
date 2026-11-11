@@ -1,7 +1,9 @@
 import base64
+import io
 
 import requests
 import streamlit as st
+from PIL import Image, ImageOps
 
 OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_API = f"{OLLAMA_HOST}/api/generate"
@@ -22,6 +24,26 @@ def ollama_status():
     names = [m.get("name", "") for m in resp.json().get("models", [])]
     vision = [n for n in names if any(h in n.lower() for h in VISION_HINTS)]
     return True, vision
+
+
+def prepare_image(raw: bytes, max_side: int):
+    """Downscale so the longest side is at most max_side and re-encode as JPEG.
+
+    Vision models resize internally anyway, so sending a 12 MP phone photo only
+    makes the request slower (bigger base64 payload, more decoding). Also
+    applies the EXIF rotation so portrait photos aren't sent sideways.
+    Returns (bytes, (orig_w, orig_h), (new_w, new_h)).
+    """
+    img = Image.open(io.BytesIO(raw))
+    img = ImageOps.exif_transpose(img)
+    orig = img.size
+    if max(orig) > max_side:
+        img.thumbnail((max_side, max_side), Image.LANCZOS)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=90)
+    return out.getvalue(), orig, img.size
 
 
 def query_ollama(model: str, prompt: str, image_bytes: bytes, num_predict: int = 900, timeout=300):
@@ -71,13 +93,29 @@ with st.sidebar:
     if running and not installed:
         st.caption("No vision models detected — pull one with `ollama pull llava-phi3`.")
     max_tokens = st.slider("Max tokens (higher = longer, slower)", 200, 1400, 900, step=50)
-    st.caption("Tip: For speed, use smaller images and reduce max tokens.")
+    max_side = st.select_slider(
+        "Max image size sent to the model (px)",
+        options=[512, 768, 1024, 1536, 2048],
+        value=1024,
+        help="Large photos are shrunk before sending — much faster with no real loss of detail for the model.",
+    )
+    st.caption("Tip: For speed, lower the image size and max tokens.")
 
 uploaded = st.file_uploader("Upload an image (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
 if uploaded:
-    image_bytes = uploaded.read()
+    raw = uploaded.read()
+    try:
+        image_bytes, orig_size, new_size = prepare_image(raw, max_side)
+    except Exception:
+        st.error("Couldn't read that image. Please upload a valid JPG or PNG.")
+        st.stop()
     st.image(image_bytes, caption="Uploaded Image", use_container_width=True)
+    if new_size != orig_size:
+        st.caption(
+            f"Resized {orig_size[0]}×{orig_size[1]} → {new_size[0]}×{new_size[1]} "
+            f"({len(raw) / 1024:.0f} KB → {len(image_bytes) / 1024:.0f} KB) for faster answers."
+        )
 
     # Q&A
     q = st.text_input("Ask a question about the image:")
