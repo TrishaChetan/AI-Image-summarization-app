@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 
 import requests
 import streamlit as st
@@ -24,6 +25,39 @@ def ollama_status():
     names = [m.get("name", "") for m in resp.json().get("models", [])]
     vision = [n for n in names if any(h in n.lower() for h in VISION_HINTS)]
     return True, vision
+
+
+ALT_TEXT_PROMPT = (
+    "Look ONLY at the image and write three things for publishing it online.\n"
+    "ALT: one sentence of accessibility alt text, under 125 characters, describing what matters "
+    "for someone who can't see it. Don't start with 'Image of' or 'Picture of'.\n"
+    "CAPTION: one friendly social-media caption, under 20 words.\n"
+    "TAGS: 5 relevant hashtags separated by spaces.\n"
+    "Reply in exactly this format with the three labels ALT:, CAPTION: and TAGS:."
+)
+
+
+def parse_alt_text(raw: str) -> dict:
+    """Pull ALT / CAPTION / TAGS out of the model reply; tolerant of small format slips."""
+    out = {"alt": "", "caption": "", "tags": ""}
+    current = None
+    for line in raw.splitlines():
+        line = line.replace("*", "").strip()  # models often bold the labels: **Alt text:**
+        m = re.match(r"^(alt(?:\s*text)?|caption|tags|hashtags)\s*[:\-]\s*(.*)$", line, re.I)
+        if m:
+            label = m.group(1).lower()
+            current = "alt" if label.startswith("alt") else ("tags" if "tag" in label else "caption")
+            out[current] = m.group(2).strip()
+        elif current and line.strip() and not out[current]:
+            out[current] = line.strip()
+    if not out["alt"]:
+        out["alt"] = raw.strip().splitlines()[0] if raw.strip() else ""
+    out["alt"] = re.sub(r"^(an?\s+)?(image|picture|photo)\s+of\s+", "", out["alt"], flags=re.I).strip().strip('"')
+    if out["alt"]:
+        out["alt"] = out["alt"][0].upper() + out["alt"][1:]
+    tags = re.findall(r"#?([A-Za-z0-9_]+)", out["tags"])
+    out["tags"] = " ".join("#" + t for t in tags[:8])
+    return out
 
 
 def prepare_image(raw: bytes, max_side: int):
@@ -132,6 +166,23 @@ if uploaded:
             if answer:
                 st.subheader("Answer")
                 st.write(answer)
+
+    # Alt text
+    if st.button("♿ Alt text & caption"):
+        with st.spinner("Writing alt text..."):
+            raw_alt = run_query(model, ALT_TEXT_PROMPT, image_bytes, num_predict=200)
+        if raw_alt:
+            alt = parse_alt_text(raw_alt)
+            st.subheader("Alt text")
+            st.code(alt["alt"], language=None)   # code block = one-click copy
+            n = len(alt["alt"])
+            st.caption(f"{n} characters" + (" — screen readers work best under 125" if n > 125 else " ✓"))
+            if alt["caption"]:
+                st.subheader("Caption")
+                st.code(alt["caption"], language=None)
+            if alt["tags"]:
+                st.subheader("Hashtags")
+                st.code(alt["tags"], language=None)
 
     # Summary
     with col2:

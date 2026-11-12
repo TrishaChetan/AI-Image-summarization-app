@@ -6,6 +6,7 @@ A local, private Streamlit app that describes images and answers questions about
 
 - 📝 **Detailed summary** — two-paragraph, 500+ word description of the image
 - 🔎 **Visual Q&A** — ask any question about what's in the picture
+- ♿ **Alt text & caption** — accessibility alt text (under 125 characters), a social caption and hashtags, each with a copy button
 - 🟢 **Ollama health check** — the sidebar shows whether Ollama is running
 - 🧠 **Auto model detection** — lists the vision models you actually have installed
 - ⚡ **Auto-resize** — big phone photos are shrunk (and EXIF-rotated) before being sent to the model, for much faster responses; size is adjustable in the sidebar
