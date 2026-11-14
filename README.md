@@ -4,7 +4,7 @@ A local, private Streamlit app that describes images and answers questions about
 
 ## Features
 
-- 📝 **Detailed summary** — two-paragraph, 500+ word description of the image
+- 📝 **Summary styles** — Detailed (two paragraphs, 500+ words), Brief (3 sentences), Bullet points, For kids, or Technical (composition, lighting, lens)
 - 🔎 **Visual Q&A** — ask any question about what's in the picture
 - ♿ **Alt text & caption** — accessibility alt text (under 125 characters), a social caption and hashtags, each with a copy button
 - 🟢 **Ollama health check** — the sidebar shows whether Ollama is running

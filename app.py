@@ -27,6 +27,29 @@ def ollama_status():
     return True, vision
 
 
+# Summary styles: (button label, prompt, token budget cap)
+BASE = "You are an expert vision describer. Look ONLY at the image and avoid speculation beyond what is visible. "
+SUMMARY_STYLES = {
+    "Detailed": ("2 paragraphs, ≥500 words",
+                 BASE + "Write a detailed description in EXACTLY TWO PARAGRAPHS totaling AT LEAST 500 words. "
+                 "Be precise about objects, layout, colors, lighting, background, relationships, and possible "
+                 "context. Do not include lists or headings; use natural prose.", None),
+    "Brief": ("3 sentences",
+              BASE + "Describe the image in exactly 3 clear sentences: the main subject, the setting, and the "
+                     "most notable detail.", 160),
+    "Bullet points": ("key facts as bullets",
+                      BASE + "List 6 to 10 short bullet points ('- ' at the start of each) covering the main "
+                             "subject, people or objects, setting, colors, any visible text, and mood.", 350),
+    "For kids": ("simple words",
+                 BASE + "Describe the image for a 7-year-old in 4 to 5 short, friendly sentences using simple "
+                        "words.", 220),
+    "Technical": ("photography details",
+                  BASE + "Analyse the image like a photographer: composition, framing, perspective, lighting "
+                         "direction and quality, color palette, depth of field, and likely camera/lens choices. "
+                         "Use short labelled paragraphs.", 600),
+}
+
+
 ALT_TEXT_PROMPT = (
     "Look ONLY at the image and write three things for publishing it online.\n"
     "ALT: one sentence of accessibility alt text, under 125 characters, describing what matters "
@@ -186,15 +209,12 @@ if uploaded:
 
     # Summary
     with col2:
-        if st.button("📝 Summarize (2 paragraphs, ≥500 words)"):
-            prompt = (
-                "You are an expert vision describer. Look ONLY at the image. "
-                "Write a detailed description in EXACTLY TWO PARAGRAPHS totaling AT LEAST 500 words. "
-                "Be precise about objects, layout, colors, lighting, background, relationships, and possible context. "
-                "Avoid speculation beyond what is visible. Do not include lists or headings; use natural prose."
-            )
+        style = st.selectbox("Summary style", list(SUMMARY_STYLES), index=0,
+                             format_func=lambda s: f"{s} — {SUMMARY_STYLES[s][0]}")
+        if st.button(f"📝 Summarize ({style.lower()})"):
+            _, prompt, cap = SUMMARY_STYLES[style]
             with st.spinner("Summarizing..."):
-                summary = run_query(model, prompt, image_bytes, num_predict=max_tokens)
+                summary = run_query(model, prompt, image_bytes, num_predict=min(cap or max_tokens, max_tokens))
             if summary:
                 st.subheader("Summary")
                 st.write(summary)
