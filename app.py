@@ -104,6 +104,36 @@ def prepare_image(raw: bytes, max_side: int):
     return out.getvalue(), orig, img.size
 
 
+def extract_palette(image_bytes: bytes, k: int = 6) -> list:
+    """Dominant colours of the image, most common first: [(hex, share 0-1), ...].
+
+    Runs locally with Pillow (median-cut quantisation on a thumbnail), so it is
+    instant and needs no model. Near-identical colours are merged.
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img.thumbnail((200, 200))
+    q = img.quantize(colors=k * 2, method=Image.Quantize.MEDIANCUT)
+    pal = q.getpalette()
+    counts = sorted(q.getcolors(), reverse=True)  # [(count, index)]
+    total = sum(c for c, _ in counts)
+    picked = []
+    for count, idx in counts:
+        rgb = tuple(pal[idx * 3: idx * 3 + 3])
+        for p in picked:
+            if sum((a - b) ** 2 for a, b in zip(p["rgb"], rgb)) < 30 ** 2:
+                p["n"] += count
+                break
+        else:
+            picked.append({"rgb": rgb, "n": count})
+    picked.sort(key=lambda p: -p["n"])
+    return [("#%02x%02x%02x" % p["rgb"], p["n"] / total) for p in picked[:k]]
+
+
+def text_colour(hex_code: str) -> str:
+    r, g, b = (int(hex_code[i:i + 2], 16) for i in (1, 3, 5))
+    return "#000" if 0.299 * r + 0.587 * g + 0.114 * b > 150 else "#fff"
+
+
 def query_ollama(model: str, prompt: str, image_bytes: bytes, num_predict: int = 900, timeout=300):
     payload = {
         "model": model,
@@ -217,7 +247,7 @@ with st.sidebar:
 uploaded = st.file_uploader("Upload an image (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
 if uploaded:
-    raw = uploaded.read()
+    raw = uploaded.getvalue()  # read() returns b"" on reruns
     try:
         image_bytes, orig_size, new_size = prepare_image(raw, max_side)
     except Exception:
@@ -259,6 +289,21 @@ if uploaded:
             if alt["tags"]:
                 st.subheader("Hashtags")
                 st.code(alt["tags"], language=None)
+
+    # Colour palette (local, no model needed)
+    with st.expander("🎨 Colour palette"):
+        n_colours = st.slider("Colours", 3, 10, 6)
+        palette = extract_palette(image_bytes, n_colours)
+        st.markdown(
+            '<div style="display:flex;border-radius:8px;overflow:hidden;height:72px">' + "".join(
+                f'<div style="flex:{share:.3f};background:{hx};color:{text_colour(hx)};display:flex;'
+                f'align-items:flex-end;padding:4px;font:12px monospace">{hx}<br>{share:.0%}</div>'
+                for hx, share in palette) + "</div>",
+            unsafe_allow_html=True,
+        )
+        st.code(":root {\n" + "".join(f"  --color-{i + 1}: {hx};\n" for i, (hx, _) in enumerate(palette)) + "}",
+                language="css")
+        st.caption("Copy the CSS variables, or use the hex codes in Figma/Canva for a matching design.")
 
     # Summary
     with col2:
