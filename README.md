@@ -5,6 +5,7 @@ A local, private Streamlit app that describes images and answers questions about
 ## Features
 
 - 📝 **Summary styles** — Detailed (two paragraphs, 500+ words), Brief (3 sentences), Bullet points, For kids, or Technical (composition, lighting, lens)
+- ⚡ **Live streaming** — answers and summaries appear word by word as the model writes them, with a tokens-per-second readout
 - 🔎 **Visual Q&A** — ask any question about what's in the picture
 - ♿ **Alt text & caption** — accessibility alt text (under 125 characters), a social caption and hashtags, each with a copy button
 - 🟢 **Ollama health check** — the sidebar shows whether Ollama is running

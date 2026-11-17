@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import re
 
 import requests
@@ -119,6 +120,61 @@ def query_ollama(model: str, prompt: str, image_bytes: bytes, num_predict: int =
     return resp.json().get("response", "").strip()
 
 
+def stream_ollama(model: str, prompt: str, image_bytes: bytes, num_predict: int = 900, stats=None, timeout=300):
+    """Yield the model's answer piece by piece as Ollama generates it.
+
+    If `stats` is a dict, it is filled with token count and speed when done.
+    """
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "images": [base64.b64encode(image_bytes).decode("utf-8")],
+        "stream": True,
+        "options": {"num_predict": num_predict, "temperature": 0.4},
+    }
+    with requests.post(OLLAMA_API, json=payload, stream=True, timeout=timeout) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line)
+            if chunk.get("error"):
+                raise RuntimeError(chunk["error"])
+            if chunk.get("response"):
+                yield chunk["response"]
+            if chunk.get("done"):
+                if stats is not None:
+                    tokens = chunk.get("eval_count") or 0
+                    secs = (chunk.get("eval_duration") or 0) / 1e9
+                    stats.update(tokens=tokens, seconds=secs,
+                                 tps=tokens / secs if secs else 0.0)
+                break
+
+
+def run_stream(model, prompt, image_bytes, num_predict):
+    """Show the answer live as it is written; returns the full text or None."""
+    stats = {}
+    try:
+        text = st.write_stream(stream_ollama(model, prompt, image_bytes, num_predict, stats=stats))
+    except requests.ConnectionError:
+        st.error("Can't reach Ollama. Start it with `ollama serve` and try again.")
+        return None
+    except requests.Timeout:
+        st.error("The model took too long to respond. Try a smaller image or fewer max tokens.")
+        return None
+    except requests.HTTPError as e:
+        detail = e.response.text if e.response is not None else str(e)
+        st.error(f"Ollama returned an error: {detail}\n\nIs the model pulled? Try `ollama pull {model}`.")
+        return None
+    except RuntimeError as e:
+        st.error(f"Ollama returned an error: {e}")
+        return None
+    text = (text or "").strip() if isinstance(text, str) else "".join(map(str, text or [])).strip()
+    if stats.get("tokens"):
+        st.caption(f"⚡ {stats['tokens']} tokens · {stats['tps']:.1f} tokens/s")
+    return text or None
+
+
 def run_query(model, prompt, image_bytes, num_predict):
     """Call the model and show a friendly error instead of a stack trace."""
     try:
@@ -179,16 +235,13 @@ if uploaded:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🔎 Get Answer", disabled=not q.strip()):
-            with st.spinner("Answering..."):
-                answer = run_query(
-                    model,
-                    f"Answer clearly and concisely based ONLY on the image. Question: {q}",
-                    image_bytes,
-                    num_predict=min(400, max_tokens),
-                )
-            if answer:
-                st.subheader("Answer")
-                st.write(answer)
+            st.subheader("Answer")
+            run_stream(
+                model,
+                f"Answer clearly and concisely based ONLY on the image. Question: {q}",
+                image_bytes,
+                min(400, max_tokens),
+            )
 
     # Alt text
     if st.button("♿ Alt text & caption"):
@@ -213,11 +266,9 @@ if uploaded:
                              format_func=lambda s: f"{s} — {SUMMARY_STYLES[s][0]}")
         if st.button(f"📝 Summarize ({style.lower()})"):
             _, prompt, cap = SUMMARY_STYLES[style]
-            with st.spinner("Summarizing..."):
-                summary = run_query(model, prompt, image_bytes, num_predict=min(cap or max_tokens, max_tokens))
+            st.subheader("Summary")
+            summary = run_stream(model, prompt, image_bytes, min(cap or max_tokens, max_tokens))
             if summary:
-                st.subheader("Summary")
-                st.write(summary)
                 st.caption(f"{len(summary.split())} words")
 else:
     st.info("Upload an image to begin.")
