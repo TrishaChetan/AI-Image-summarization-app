@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import re
@@ -205,6 +206,48 @@ def run_stream(model, prompt, image_bytes, num_predict):
     return text or None
 
 
+def read_aloud(text: str, key: str):
+    """Play / pause / stop controls that speak `text` with the browser's own voices
+    (Web Speech API) — offline, no extra installs, works for low-vision users."""
+    import inspect
+
+    k = re.sub(r"[^a-z0-9]", "", key.lower()) or "x"
+    spoken = json.dumps(text).replace("</", "<\\/")  # can't close the <script> early
+    markup = f"""
+<div style="font:14px system-ui,sans-serif;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0">
+  <button id="ra-play-{k}">🔊 Read aloud</button><button id="ra-pause-{k}">⏸ Pause</button>
+  <button id="ra-stop-{k}">⏹ Stop</button>
+  <label>speed <select id="ra-rate-{k}"><option>0.8</option><option selected>1</option><option>1.25</option>
+  <option>1.5</option></select></label>
+  <span id="ra-msg-{k}" style="opacity:.7"></span>
+</div>
+<style>[id^="ra-"] {{ font: inherit }} button[id^="ra-"] {{ padding:4px 10px; border-radius:6px;
+  border:1px solid #ccc; background:#fff; color:#222; cursor:pointer }}</style>
+<script>
+(() => {{
+  const text = {spoken};
+  const s = window.speechSynthesis, msg = document.getElementById('ra-msg-{k}');
+  if (!s) {{ msg.textContent = 'Your browser has no speech voices.'; return; }}
+  document.getElementById('ra-play-{k}').onclick = () => {{
+    if (s.paused) {{ s.resume(); return; }}
+    s.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = parseFloat(document.getElementById('ra-rate-{k}').value);
+    u.onend = () => {{ msg.textContent = ''; }};
+    msg.textContent = 'reading…';
+    s.speak(u);
+  }};
+  document.getElementById('ra-pause-{k}').onclick = () => s.pause();
+  document.getElementById('ra-stop-{k}').onclick = () => {{ s.cancel(); msg.textContent = ''; }};
+}})();
+</script>"""
+    if "unsafe_allow_javascript" in inspect.signature(st.html).parameters:
+        st.html(markup, unsafe_allow_javascript=True)
+    else:  # Streamlit older than 1.50
+        import streamlit.components.v1 as components
+        components.html(markup, height=48)
+
+
 def run_query(model, prompt, image_bytes, num_predict):
     """Call the model and show a friendly error instead of a stack trace."""
     try:
@@ -253,6 +296,11 @@ if uploaded:
     except Exception:
         st.error("Couldn't read that image. Please upload a valid JPG or PNG.")
         st.stop()
+    # results survive reruns (clicking another button) until a new image is uploaded
+    image_key = hashlib.sha1(raw).hexdigest()
+    if st.session_state.get("image_key") != image_key:
+        st.session_state.image_key = image_key
+        st.session_state.results = {}
     st.image(image_bytes, caption="Uploaded Image", use_container_width=True)
     if new_size != orig_size:
         st.caption(
@@ -266,12 +314,21 @@ if uploaded:
     with col1:
         if st.button("🔎 Get Answer", disabled=not q.strip()):
             st.subheader("Answer")
-            run_stream(
+            answer = run_stream(
                 model,
                 f"Answer clearly and concisely based ONLY on the image. Question: {q}",
                 image_bytes,
                 min(400, max_tokens),
             )
+            if answer:
+                st.session_state.results["answer"] = (q, answer)
+        elif st.session_state.results.get("answer"):
+            prev_q, prev_a = st.session_state.results["answer"]
+            st.subheader("Answer")
+            st.caption(f"Q: {prev_q}")
+            st.write(prev_a)
+        if st.session_state.results.get("answer"):
+            read_aloud(st.session_state.results["answer"][1], "answer")
 
     # Alt text
     if st.button("♿ Alt text & caption"):
@@ -314,6 +371,16 @@ if uploaded:
             st.subheader("Summary")
             summary = run_stream(model, prompt, image_bytes, min(cap or max_tokens, max_tokens))
             if summary:
-                st.caption(f"{len(summary.split())} words")
+                st.session_state.results["summary"] = (style, summary)
+        elif st.session_state.results.get("summary"):
+            prev_style, prev = st.session_state.results["summary"]
+            st.subheader(f"Summary ({prev_style.lower()})")
+            st.write(prev)
+        if st.session_state.results.get("summary"):
+            summary = st.session_state.results["summary"][1]
+            st.caption(f"{len(summary.split())} words")
+            read_aloud(summary, "summary")
+            st.download_button("⬇️ Download summary (.txt)", summary,
+                               file_name=f"{uploaded.name.rsplit('.', 1)[0]}-summary.txt", mime="text/plain")
 else:
     st.info("Upload an image to begin.")
